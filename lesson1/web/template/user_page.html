@@ -1,0 +1,13 @@
+{{define "head"}}
+<title>Страница пользователя</title>
+{{end}}
+
+{{define "body"}}
+<form class="pure-form" method="POST" action="/logout">
+    <fieldset>
+        <legend>Вы вошли как {{.Login}}</legend>
+
+        <button type="submit" class="pure-button pure-button-primary">Выйти</button>
+    </fieldset>
+</form>
+{{end}}

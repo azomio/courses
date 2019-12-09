@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<link
+		rel="stylesheet"
+		href="https://unpkg.com/purecss@1.0.1/build/pure-min.css"
+		integrity="sha384-oAOxQR6DkCoMliIh8yFnu25d7Eq/PHS21PClpwjOTeU2jRSq11vu66rf90/cZr47"
+		crossorigin="anonymous">
+	{{template "head" .}}
+</head>
+<body>
+	<div class="pure-menu pure-menu-horizontal">
+	    <ul class="pure-menu-list">
+	        <li class="pure-menu-item"><a href="/" class="pure-menu-link">Фильмы</a></li>
+	        <li class="pure-menu-item"><a href="/login" class="pure-menu-link">Вход</a></li>
+	    </ul>
+	</div>
+	{{template "body" .}}
+</body>
+</html>

@@ -1,0 +1,17 @@
+{{define "head"}}
+<title>Вход</title>
+{{end}}
+
+{{define "body"}}
+<form class="pure-form" method="POST">
+    <fieldset>
+        <legend>Вход</legend>
+
+        <input name="login" type="login" placeholder="Login">
+        <input name="password" type="password" placeholder="Password">
+        <div>{{.Hint}}</div>
+
+        <button type="submit" class="pure-button pure-button-primary">Sign in</button>
+    </fieldset>
+</form>
+{{end}}
