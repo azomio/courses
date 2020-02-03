@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<link rel="stylesheet" href="https://unpkg.com/purecss@1.0.1/build/pure-min.css">
+	<title>Список фильмов</title>
+</head>
+<body>
+	<div class="pure-menu pure-menu-horizontal">
+	    <ul class="pure-menu-list">
+	        <li class="pure-menu-item">
+	        	{{if .User}}
+	        		Привет, {{.User.Name}}
+				{{else}}
+		        	Вы не залогинены
+				{{end}}
+	        </li>
+	    </ul>
+	</div>
+
+	{{if .Movies}}
+		<table class="pure-table">
+	    <thead>
+	        <tr>
+	            <th>#</th>
+	            <th>Постер</th>
+	            <th>Название</th>
+	        </tr>
+	    </thead>
+
+	    <tbody>
+			{{range .Movies}}
+		        <tr>
+		            <td>{{.ID}}</td>
+		            <td><img src="{{.Poster}}"></td>
+		            <td><a href="/movie/{{.ID}}">{{.Name}}</a></td>
+		        </tr>
+			{{end}}
+		</tbody>
+	{{else}}
+		Не удалось загрузить список
+	{{end}}
+</table>
+</body>
+</html>
