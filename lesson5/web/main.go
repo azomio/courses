@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/azomio/courses/lesson4/pkg/grpc/user"
 	"github.com/azomio/courses/lesson4/pkg/jwt"
 	"github.com/gorilla/mux"
+	consulapi "github.com/hashicorp/consul/api"
 	"google.golang.org/grpc"
 	"html/template"
 	"io/ioutil"
@@ -16,19 +18,14 @@ import (
 	"net/url"
 )
 
-type Config struct {
-	Addr         string
-	UserGRPCAddr string
-	UserAddr     string
-	MovieAddr    string
-}
+const ServicePrefix = "service/web"
 
-var cfg = Config{
-	Addr:         ":8082",
-	UserGRPCAddr: ":1234",
-	UserAddr:     "http://localhost:8081",
-	MovieAddr:    "http://localhost:8080",
-}
+var (
+	Port             string
+	TemplateDir      string
+	UserServiceAddr  string
+	MovieServiceAddr string
+)
 
 var TT struct {
 	MovieList *template.Template
@@ -37,7 +34,33 @@ var TT struct {
 
 var UserCli user.UserClient
 
+func loadConfig(addr string) error {
+	consulConfig := consulapi.DefaultConfig()
+	consulConfig.Address = addr
+	consul, err := consulapi.NewClient(consulConfig)
+	if err != nil {
+		return err
+	}
+
+	port, _, err := consul.KV().Get(ServicePrefix+"/port", nil)
+	if err != nil || port == nil {
+		return fmt.Errorf("Can't get port value")
+	} else {
+		Port = string(port.Value)
+	}
+
+	return nil
+}
+
 func main() {
+	consulAddr := flag.String("consul_addr", "localhost:8600", "Consul address")
+	flag.Parse()
+
+	err := loadConfig(*consulAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	r := mux.NewRouter()
 	r.HandleFunc("/", MainHandler)
 
@@ -45,7 +68,7 @@ func main() {
 	r.HandleFunc("/login", LoginHandler).Methods("POST")
 	r.HandleFunc("/logout", LogoutHandler).Methods("POST")
 
-	conn, err := grpc.Dial(cfg.UserGRPCAddr, grpc.WithInsecure())
+	conn, err := grpc.Dial(":1234", grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("did not connect: %s", err)
 	}
@@ -64,7 +87,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.ListenAndServe(cfg.Addr, r)
+	log.Print("Service started on port " + Port)
+	http.ListenAndServe(Port, r)
 }
 
 type MainPage struct {
@@ -179,7 +203,7 @@ func LogoutHandler(w http.ResponseWriter, r *http.Request) {
 
 func getMovies() (*[]Movie, error) {
 	mm := &[]Movie{}
-	err := get(cfg.MovieAddr+"/movie", mm)
+	err := get("http://localhost:8080/movie", mm)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +239,7 @@ func getUser(r *http.Request) (u User, err error) {
 		User
 		Error string
 	}{}
-	err = get(cfg.UserAddr+"/user?token="+ses.Value, res)
+	err = get("http://localhost:8081/user?token="+ses.Value, res)
 	if err != nil {
 		return u, err
 	}

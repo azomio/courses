@@ -12,10 +12,10 @@ import (
 
 var App struct {
 	TT struct {
-		MovieList *template.Template
-		Movie     *template.Template
-		Login     *template.Template
-		UserPage  *template.Template
+		MovieList    *template.Template
+		Movie        *template.Template
+		LoginHandler *template.Template
+		UserPage     *template.Template
 	}
 }
 

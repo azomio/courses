@@ -10,6 +10,11 @@
 	        <li class="pure-menu-item">
 	        	{{if .User}}
 	        		Привет, {{.User.Name}}
+	        		{{if .User.IsPaid}}
+	        			подписка офомлена
+	        		{{else}}
+	        			<a href="{{.PayURL}}">оформить подписку</a>
+	        		{{end}}
 				{{else}}
 		        	Вы не залогинены
 				{{end}}
@@ -32,7 +37,13 @@
 		        <tr>
 		            <td>{{.ID}}</td>
 		            <td><img src="{{.Poster}}"></td>
-		            <td><a href="/movie/{{.ID}}">{{.Name}}</a></td>
+		            <td>
+		            	{{if and .IsPaid (not $.User.IsPaid) }}
+		            		{{.Name}} (платный)
+		            	{{ else }}
+		            		<a href="/movie/{{.ID}}">{{.Name}}</a>
+		            	{{end}}
+		            </td>
 		        </tr>
 			{{end}}
 		</tbody>
