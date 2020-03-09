@@ -4,30 +4,43 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
-	"github.com/azomio/courses/lesson4/pkg/grpc/user"
-	"github.com/azomio/courses/lesson4/pkg/jwt"
+	"github.com/azomio/courses/lesson6/pkg/grpc/user"
+	"github.com/azomio/courses/lesson6/pkg/jwt"
+	"github.com/azomio/courses/lesson6/pkg/render"
+	"github.com/azomio/courses/lesson6/web/moviegrpc"
 	"github.com/gorilla/mux"
+	consulapi "github.com/hashicorp/consul/api"
+	"github.com/satori/go.uuid"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"html/template"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 )
 
-type Config struct {
-	Addr         string
-	UserGRPCAddr string
-	UserAddr     string
-	MovieAddr    string
-}
+const (
+	ServicePrefix = "service/web"
+	ServiceName   = "web"
+)
 
-var cfg = Config{
-	Addr:         ":8082",
-	UserGRPCAddr: ":1234",
-	UserAddr:     "http://localhost:8081",
-	MovieAddr:    "http://localhost:8080",
+var cfg = struct {
+	Port          int
+	UserAddr      string
+	MovieAddr     string
+	MovieGRPCPort int
+	PaymentAddr   string
+}{
+	Port:          8080,
+	MovieAddr:     "http://localhost:8081",
+	MovieGRPCPort: 8081,
+	UserAddr:      "http://localhost:8082",
+	PaymentAddr:   "http://localhost:8083",
 }
 
 var TT struct {
@@ -36,47 +49,109 @@ var TT struct {
 }
 
 var UserCli user.UserClient
+var MovieCli moviegrpc.MovieClient
+
+func loadConfig(addr string) error {
+	consulConfig := consulapi.DefaultConfig()
+	consulConfig.Address = addr
+	consul, err := consulapi.NewClient(consulConfig)
+	if err != nil {
+		return err
+	}
+
+	port, _, err := consul.KV().Get(ServicePrefix+"/port", nil)
+	if err != nil || port == nil {
+		return fmt.Errorf("Can't get '/port' value from consul for " + ServicePrefix)
+	}
+
+	cfg.Port, err = strconv.Atoi(string(port.Value))
+	if err != nil {
+		return fmt.Errorf("Wrong 'port' value: %w", err)
+	}
+
+	return nil
+}
+
+var RequestIDContextKey = struct{}{}
+
+func requestIDMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := uuid.NewV4()
+		rWithId := r.WithContext(context.WithValue(r.Context(), RequestIDContextKey, id.String()))
+		next(w, rWithId)
+	}
+}
 
 func main() {
+	consulAddr := flag.String("consul_addr", "localhost:8500", "Consul address")
+	flag.Parse()
+
+	err := loadConfig(*consulAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	f, err := os.OpenFile(
+		fmt.Sprintf("/logs/cinema_online/%s.log", ServiceName),
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666,
+	)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	defer f.Close()
+	log.SetOutput(f)
+
+	// log.SetFormatter(&log.JSONFormatter{})
+
 	r := mux.NewRouter()
-	r.HandleFunc("/", MainHandler)
+	r.HandleFunc("/", requestIDMiddleware(MainHandler))
 
 	r.HandleFunc("/login", LoginFormHandler).Methods("Get")
 	r.HandleFunc("/login", LoginHandler).Methods("POST")
 	r.HandleFunc("/logout", LogoutHandler).Methods("POST")
 
-	conn, err := grpc.Dial(cfg.UserGRPCAddr, grpc.WithInsecure())
+	connUser, err := grpc.Dial(":1234", grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("did not connect: %s", err)
 	}
-	UserCli = user.NewUserClient(conn)
+	defer connUser.Close()
+	UserCli = user.NewUserClient(connUser)
+
+	connMovie, err := grpc.Dial(":"+strconv.Itoa(cfg.MovieGRPCPort), grpc.WithInsecure())
+	if err != nil {
+		log.Fatalf("did not connect: %s", err)
+	}
+	defer connMovie.Close()
+	MovieCli = moviegrpc.NewMovieClient(connMovie)
 
 	fs := http.FileServer(http.Dir("assets"))
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", fs))
 
-	TT.MovieList, err = template.ParseFiles("template/layout/base.html", "template/main.html")
+	// Настройка шаблонизатора
+	render.SetTemplateDir(".")
+	render.SetTemplateLayout("layout.html")
+	render.AddTemplate("main", "main.html")
+	render.AddTemplate("login", "login.html")
+	err = render.ParseTemplates()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("Name: %s", TT.MovieList.Name())
-
-	TT.Login, err = template.ParseFiles("template/layout/base.html", "template/login.html")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	http.ListenAndServe(cfg.Addr, r)
+	log.Printf("Starting on port %d", cfg.Port)
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(cfg.Port), r))
 }
 
 type MainPage struct {
-	Movies *[]Movie
-	User   User
+	Movies      []Movie
+	MoviesError string
+	User        User
+	PayURL      string
 }
 
 type User struct {
-	Name   string
-	IsPaid bool
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	IsPaid bool   `json:"is_paid"`
 }
 
 type Movie struct {
@@ -88,27 +163,28 @@ type Movie struct {
 }
 
 func MainHandler(w http.ResponseWriter, r *http.Request) {
-
 	page := MainPage{}
 
+	ctx := r.Context()
+	rid := ctx.Value(RequestIDContextKey).(string)
+
 	var err error
-	page.Movies, err = getMovies()
+	page.Movies, err = getMovies(ctx)
 	if err != nil {
-		log.Printf("Get movie error: %v", err)
+		log.WithFields(log.Fields{
+			"request_id": rid,
+		}).Printf("Get movie error: %v", err)
+		page.MoviesError = "Не удалось загрузить список. Код ошибки: " + rid
 	}
 
 	page.User, err = getUserByToken(r)
 	if err != nil {
-		log.Printf("Get user error: %v", err)
+		log.Printf("[%s] Get user error: %v", rid, err)
+	} else {
+		page.PayURL = cfg.PaymentAddr + "/checkout?uid=" + strconv.Itoa(page.User.ID)
 	}
 
-	log.Printf("User: %+v", page.User)
-
-	err = TT.MovieList.ExecuteTemplate(w, "base", page)
-	if err != nil {
-		log.Printf("Render error: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	render.RenderTemplate(w, "main", page)
 }
 
 type LoginPage struct {
@@ -179,14 +255,32 @@ func LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-func getMovies() (*[]Movie, error) {
-	mm := &[]Movie{}
-	err := get(cfg.MovieAddr+"/movie", mm)
+func getMovies(ctx context.Context) (mm []Movie, err error) {
+	rid := ctx.Value(RequestIDContextKey).(string)
+	md := metadata.Pairs("X-Request-ID", rid)
+	ctxRpc := metadata.NewOutgoingContext(context.Background(), md)
+
+	res, err := MovieCli.MovieList(
+		ctxRpc,
+		&moviegrpc.MovieListRequest{},
+	)
+
 	if err != nil {
+		log.Printf("Get movie error: %v", err)
 		return nil, err
 	}
 
-	return mm, nil
+	for _, m := range res.Movies {
+		mm = append(mm, Movie{
+			ID:       int(m.Id),
+			Name:     m.Name,
+			Poster:   m.Poster,
+			MovieUrl: m.MovieUrl,
+			IsPaid:   m.IsPaid,
+		})
+	}
+
+	return
 }
 
 var ERR_NO_JWT = errors.New("No 'jwt' cookie")
@@ -205,31 +299,6 @@ func getUserByToken(r *http.Request) (u User, err error) {
 	u.Name = jwtData.Name
 	u.IsPaid = jwtData.IsPaid
 	return u, err
-}
-
-func getUser(r *http.Request) (u User, err error) {
-	ses, err := r.Cookie("session")
-	if ses == nil {
-		return u, err
-	}
-
-	res := &struct {
-		User
-		Error string
-	}{}
-	err = get(cfg.UserAddr+"/user?token="+ses.Value, res)
-	if err != nil {
-		return u, err
-	}
-
-	if res.Error != "" {
-		return u, fmt.Errorf(res.Error)
-	}
-
-	return User{
-		Name:   res.Name,
-		IsPaid: true,
-	}, err
 }
 
 func post(url string, in url.Values, out interface{}) error {

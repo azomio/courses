@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-var Addr = ":8081"
+const Addr = ":8081"
 
 func main() {
 	http.HandleFunc("/movies", movieListHandler)

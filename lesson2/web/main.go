@@ -1,50 +1,46 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/azomio/courses/lesson2/pkg/render"
+	"github.com/azomio/courses/lesson2/pkg/requester"
 	"github.com/gorilla/mux"
-	"html/template"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
 )
 
-type Config struct {
-	Addr         string
-	UserGRPCAddr string
-	UserAddr     string
-	MovieAddr    string
-	PaymentAddr  string
-}
-
-var cfg = Config{
-	Addr:         ":8080",
-	UserGRPCAddr: ":1234",
-	MovieAddr:    "http://localhost:8081",
-	UserAddr:     "http://localhost:8082",
-	PaymentAddr:  "http://localhost:8083/",
-}
-
-var TT struct {
-	MovieList *template.Template
+var cfg = struct {
+	Port        int
+	UserAddr    string
+	MovieAddr   string
+	PaymentAddr string
+}{
+	Port:        8080,
+	MovieAddr:   "http://localhost:8081",
+	UserAddr:    "http://localhost:8082",
+	PaymentAddr: "http://localhost:8083",
 }
 
 func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/", MainHandler)
 
+	// Обработчик статических файлов
 	fs := http.FileServer(http.Dir("assets"))
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", fs))
 
-	var err error
-	TT.MovieList, err = template.ParseFiles("template/main.html")
+	// Настройка шаблонизатора
+	render.SetTemplateDir(".")
+	render.SetTemplateLayout("layout.html")
+	render.AddTemplate("main", "main.html")
+	err := render.ParseTemplates()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Fatal(http.ListenAndServe(cfg.Addr, r))
+	log.Printf("Starting on port %d", cfg.Port)
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(cfg.Port), r))
 }
 
 type MainPage struct {
@@ -54,9 +50,9 @@ type MainPage struct {
 }
 
 type User struct {
-	ID     int
-	Name   string
-	IsPaid bool
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	IsPaid bool   `json:"is_paid"`
 }
 
 type Movie struct {
@@ -83,16 +79,12 @@ func MainHandler(w http.ResponseWriter, r *http.Request) {
 		page.PayURL = cfg.PaymentAddr + "/checkout?uid=" + strconv.Itoa(page.User.ID)
 	}
 
-	err = TT.MovieList.Execute(w, page)
-	if err != nil {
-		log.Printf("Get user error: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	render.RenderTemplate(w, "main", page)
 }
 
 func getMovies() (*[]Movie, error) {
 	mm := &[]Movie{}
-	err := get(cfg.MovieAddr+"/movies", mm)
+	err := requester.GetJSON(cfg.MovieAddr+"/movies", mm)
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +102,10 @@ func getUser(r *http.Request) (usr User, err error) {
 		User
 		Error string
 	}{}
-	err = get(cfg.UserAddr+"/user?token="+ses.Value, res)
+	err = requester.GetJSON(cfg.UserAddr+"/user?token="+ses.Value, res)
 	if err != nil {
 		return usr, err
 	}
-
-	log.Printf("user service response: %+v", res)
 
 	if res.Error != "" {
 		return usr, fmt.Errorf(res.Error)
@@ -126,23 +116,4 @@ func getUser(r *http.Request) (usr User, err error) {
 	usr.IsPaid = res.IsPaid
 
 	return usr, nil
-}
-
-func get(url string, out interface{}) error {
-	res, err := http.DefaultClient.Get(url)
-	if err != nil {
-		return fmt.Errorf("make request error: %w", err)
-	}
-
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("read response error: %w", err)
-	}
-
-	err = json.Unmarshal(body, out)
-	if err != nil {
-		return fmt.Errorf("parse response error '%s': %w", body, err)
-	}
-
-	return nil
 }

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/azomio/courses/lesson2/pkg/render"
+	"github.com/azomio/courses/lesson6/pkg/render"
 	"github.com/gorilla/mux"
 	"log"
 	"net/http"
