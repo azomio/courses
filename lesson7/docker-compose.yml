@@ -1,23 +1,26 @@
 version: '3'
-
-networks:
-  elk:
-
-volumes:
-  elasticsearch:
-    driver: local
-
 services:
-
-  logstash:
-    container_name: logstash_one_channel
-    image: docker.elastic.co/logstash/logstash:6.3.2
-    networks:
-        - elk
-    environment:
-      XPACK_MONITORING_ENABLED: "false"
+  prometheus:
+    image: prom/prometheus
     ports:
-        - 5046:5046
+      - 9090:9090
     volumes:
-        - ./config/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro
-        - ./config/pipelines:/usr/share/logstash/config/pipelines:ro
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  user:
+    image: golang:1.14-alpine
+    command: go run user/main.go
+    ports:
+      - 8092:8092
+      - 8082:8082
+    working_dir: /root/
+    volumes:
+      - .:/root
+  graphite:
+    image: graphiteapp/graphite-statsd
+    ports:
+      - 80:80
+      - 8125:8125/udp
+  grafana:
+    image: grafana/grafana
+    ports:
+      - 3000:3000

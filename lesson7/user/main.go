@@ -2,27 +2,55 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"github.com/azomio/courses/lesson4/pkg/grpc/user"
-	"github.com/azomio/courses/lesson4/pkg/jwt"
+	"github.com/azomio/courses/lesson7/pkg/grpc/user"
+	"github.com/azomio/courses/lesson7/pkg/jwt"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
+	"gopkg.in/alexcesaro/statsd.v2"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 )
 
+var cfg = struct {
+	Port     int
+	HTTPPort int
+}{
+	Port:     8082,
+	HTTPPort: 8092,
+}
+
+var Stat *statsd.Client
+
 func main() {
+
+	http.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Printf("Starting http server on port %d", cfg.HTTPPort)
+		http.ListenAndServe(":"+strconv.Itoa(cfg.HTTPPort), nil)
+	}()
+
+	var err error
+	Stat, err = statsd.New(
+		statsd.Address("graphite:8125"),
+		statsd.Prefix("user"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer Stat.Close()
+
 	srv := grpc.NewServer()
 
 	user.RegisterUserServer(srv, &UserService{})
 
-	listener, err := net.Listen("tcp", ":1234")
+	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	log.Println("Starting server on localhost: 1234")
+	log.Printf("Starting grpc server on port: %d", cfg.Port)
 	srv.Serve(listener)
 }
 
@@ -32,6 +60,13 @@ func (s *UserService) Login(
 	ctx context.Context,
 	in *user.LoginRequest,
 ) (*user.LoginResponse, error) {
+
+	if Stat == nil {
+		log.Printf("No statsd")
+	} else {
+		Stat.Increment("login")
+	}
+
 	u := UU.GetByEmail(in.GetEmail())
 
 	if u == nil {
